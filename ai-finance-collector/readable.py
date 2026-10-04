@@ -1,7 +1,7 @@
 """Conservative semantic article extraction. Never archive login/paywall screens."""
 from html.parser import HTMLParser
 import re
-import content_store
+import text_utils
 
 class Article(HTMLParser):
     def __init__(self):super().__init__();self.depth=0;self.parts=[];self.skip=0
@@ -22,7 +22,7 @@ class Article(HTMLParser):
 
 def title(html):
     match=re.search(r'<title[^>]*>(.*?)</title>',html,re.S|re.I)
-    return content_store.plain_text(match[1]) if match else ''
+    return text_utils.plain_text(match[1]) if match else ''
 
 def extract(html):
     parser=Article();parser.feed(html)
@@ -32,4 +32,4 @@ def extract(html):
     return text
 
 def gated(text):
-    return any(x in text.lower() for x in ('sign in to read','subscribe to continue','this post is for paid subscribers','仅限会员','登录后阅读','付费解锁'))
+    return text_utils.gated(text)

@@ -13,7 +13,7 @@ import urllib.parse
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import interests
-import content_store
+import text_utils
 from model_config import model_path
 
 
@@ -52,11 +52,11 @@ def transcript(text, mime=''):
             segments=[dict(start=float(s['startTime']),end=float(s['endTime']),text=s['body']) for s in obj.get('segments',[])]
     elif '-->' in text:
         pattern=r'([\d:,\.]+)\s+-->\s+([\d:,\.]+)[^\n]*\n(.*?)(?=\n\s*\n|\Z)'
-        segments=[dict(start=seconds(a),end=seconds(b),text=content_store.plain_text(t)) for a,b,t in re.findall(pattern,text,re.S)]
+        segments=[dict(start=seconds(a),end=seconds(b),text=text_utils.plain_text(t)) for a,b,t in re.findall(pattern,text,re.S)]
     if segments:
         segments=[s for s in segments if s['text']]
         return {'text':'\n'.join(s['text'] for s in segments),'segments':segments}
-    text=content_store.plain_text(text) if '<' in text else text.strip()
+    text=text_utils.plain_text(text) if '<' in text else text.strip()
     if not text: raise ValueError('文字稿为空')
     return {'text':text,'segments':[]}
 
