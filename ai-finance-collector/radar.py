@@ -1,5 +1,7 @@
 """Local AI industry research collector. Python 3.9+, standard library only."""
 import argparse
+import database
+import archive_store
 import datetime as dt
 import email.utils
 import fcntl
@@ -55,52 +57,10 @@ def now():
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 def connect():
-    DB.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(DB, timeout=30)
-    c.row_factory = sqlite3.Row
-    c.execute('PRAGMA journal_mode=WAL')
-    c.execute('PRAGMA secure_delete=ON')
-    return c
+    return database.connect(DB)
 
 def init():
-    with connect() as c:
-        # Dedup adds a grouping index; preserve all original records and annotations.
-        if c.execute("SELECT 1 FROM sqlite_master WHERE name='articles'").fetchone() and not c.execute("SELECT 1 FROM sqlite_master WHERE name='article_duplicates'").fetchone() and c.execute('SELECT count(*) FROM articles').fetchone()[0]:
-            folder=Path(os.environ.get('RADAR_BACKUP_DIR',str(ROOT/'backups')));folder.mkdir(parents=True,exist_ok=True)
-            with sqlite3.connect(folder/('pre-cross-source-dedup-'+dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.sqlite3')) as out:c.backup(out)
-        # Snapshot before the developer relevance migration. Articles are never rewritten.
-        if c.execute("SELECT 1 FROM sqlite_master WHERE name='watch_topics'").fetchone() and not c.execute("SELECT 1 FROM sqlite_master WHERE name='article_focus'").fetchone():
-            folder=Path(os.environ.get('RADAR_BACKUP_DIR',str(ROOT/'backups')));folder.mkdir(parents=True,exist_ok=True)
-            with sqlite3.connect(folder/('pre-developer-focus-'+dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.sqlite3')) as out:c.backup(out)
-        # Back up before the additive topic migration; preserve article contents.
-        if c.execute("SELECT 1 FROM sqlite_master WHERE name='articles'").fetchone() and not c.execute("SELECT 1 FROM sqlite_master WHERE name='watch_topics'").fetchone() and c.execute('SELECT count(*) FROM articles').fetchone()[0]:
-            folder=Path(os.environ.get('RADAR_BACKUP_DIR',str(ROOT/'backups')));folder.mkdir(parents=True,exist_ok=True)
-            with sqlite3.connect(folder/('pre-topics-'+dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.sqlite3')) as out:c.backup(out)
-        # Snapshot an existing archive before the additive preference migration.
-        if c.execute("SELECT 1 FROM sqlite_master WHERE name='articles'").fetchone() and not c.execute("SELECT 1 FROM sqlite_master WHERE name='source_signals'").fetchone():
-            if c.execute('SELECT count(*) FROM articles').fetchone()[0]:
-                folder=Path(os.environ.get('RADAR_BACKUP_DIR',str(ROOT/'backups')))
-                folder.mkdir(parents=True,exist_ok=True)
-                with sqlite3.connect(folder/('pre-preferences-'+dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.sqlite3')) as out:c.backup(out)
-        c.executescript('''
-        CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, config TEXT NOT NULL, status TEXT DEFAULT '未采集', checked_at TEXT, success_at TEXT, error TEXT, last_count INTEGER DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS articles(id TEXT PRIMARY KEY, url TEXT UNIQUE NOT NULL, title TEXT NOT NULL, excerpt TEXT, publisher TEXT, region TEXT, language TEXT, kind TEXT, topics TEXT, published_at TEXT, collected_at TEXT, source_id TEXT, starred INTEGER DEFAULT 0, note TEXT DEFAULT '', review TEXT DEFAULT '未核验');
-        CREATE TABLE IF NOT EXISTS sightings(article_id TEXT, source_id TEXT, seen_at TEXT, PRIMARY KEY(article_id,source_id));
-        CREATE TABLE IF NOT EXISTS runs(id INTEGER PRIMARY KEY, started_at TEXT, finished_at TEXT, result TEXT);
-        CREATE INDEX IF NOT EXISTS article_time ON articles(published_at);
-        ''')
-        content_store.schema(c)
-        interests.schema(c)
-        source_lifecycle.schema(c)
-        translation.schema(c)
-        for s in json.loads((ROOT / 'sources.json').read_text()):
-            c.execute('INSERT INTO sources(id,config) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET config=excluded.config', (s['id'], json.dumps(s, ensure_ascii=False)))
-        semantic.schema(c)
-        watchlists.bootstrap(c,AI_WORDS)
-        reddit_quality.bootstrap(c)
-        dedup.bootstrap(c)
-        semantic.rebuild(c)
-        c.execute("INSERT OR IGNORE INTO article_retention SELECT id,? FROM articles WHERE url LIKE 'https://%reddit.com/%'",(__import__("time").time()+48*3600,))
+    return database.initialize(connect, ROOT, AI_WORDS)
 
 def clean(value):
     return re.sub(r'\s+', ' ', html.unescape(re.sub('<[^>]+>', ' ', value or ''))).strip()
@@ -231,29 +191,7 @@ def collect_source(s):
     return rows, '成功', ''
 
 def put(c, s, row):
-    url = canonical(row['url'])
-    ident = hashlib.sha256(url.encode()).hexdigest()[:24]
-    if reddit_quality.is_reddit(url) and s['id']!='manual-import':
-        existing=c.execute('SELECT id FROM articles WHERE id=?',(ident,)).fetchone()
-        if existing:
-            decision=reddit_quality.record(c,ident,row,s)
-        else:
-            decision=reddit_quality.assess(row,s)
-        if not decision['eligible']:return 0
-    tags = classify(row['title'] + ' ' + row.get('excerpt', ''))
-    result = c.execute('INSERT OR IGNORE INTO articles(id,url,title,excerpt,publisher,region,language,kind,topics,published_at,collected_at,source_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', (ident,url,row['title'],row.get('excerpt',''),row.get('publisher') or s['name'],s['region'],s['language'],s['kind'],json.dumps(tags,ensure_ascii=False),row.get('published_at'),now(),s['id']))
-    c.execute('INSERT INTO sightings VALUES(?,?,?) ON CONFLICT(article_id,source_id) DO UPDATE SET seen_at=excluded.seen_at', (ident,s['id'],now()))
-    content_store.store(c,ident,row)
-    if reddit_quality.is_reddit(url) and s['id']!='manual-import':reddit_quality.record(c,ident,row,s)
-    annotation=c.execute('SELECT * FROM saved_annotations WHERE article_id=?',(ident,)).fetchone()
-    if annotation:
-        c.execute('UPDATE articles SET starred=?,note=?,review=? WHERE id=?',(annotation['starred'],annotation['note'],annotation['review'],ident))
-        c.execute('DELETE FROM saved_annotations WHERE article_id=?',(ident,))
-    watchlists.reindex_article(c,ident)
-    dedup.index_article(c,ident)
-    dirty=semantic.mark_dirty(c,ident)
-    if dirty or result.rowcount:semantic.rebuild(c)
-    return result.rowcount
+    return archive_store.put(c, s, row, canonical=canonical, classify=classify, now=now)
 
 def collect(only=None, scheduled=False, topic_id=None):
     if not LOCK.acquire(blocking=False):
@@ -304,15 +242,7 @@ def collect(only=None, scheduled=False, topic_id=None):
         LOCK.release()
 
 def backup():
-    folder = Path(os.environ.get('RADAR_BACKUP_DIR',str(ROOT/'backups')))
-    folder.mkdir(parents=True,exist_ok=True)
-    dest = folder / ('radar-' + dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '.sqlite3')
-    with connect() as src, sqlite3.connect(dest) as out:
-        src.backup(out)
-        content_store.purge_reddit(out,all_content=True)
-        out.commit()
-        out.execute("VACUUM")
-    return str(dest)
+    return archive_store.backup(connect, ROOT)
 
 class Handler(BaseHTTPRequestHandler):
     def send(self, obj, code=200):
