@@ -34,6 +34,9 @@ import source_lifecycle
 import capture
 import content_store
 import collection_api
+import source_api
+import article_api
+from api_contracts import SourceServices, ArticleServices, CollectionServices
 import native_client
 import reddit_quality
 import sys
@@ -280,98 +283,21 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 extra=semantic_api.get(p.path,q,c)
                 if extra is not None:return self.send(extra)
-                extra=collection_api.get(p.path,q,c,sys.modules[__name__])
+                extra=collection_api.get(p.path,q,c,CollectionServices(fetch,parse_feed,canonical,put))
                 if extra is not None:return self.send(extra)
             except (ValueError,KeyError,urllib.error.URLError) as e:return self.send({'error':str(e)},400)
-            if p.path == '/api/watch-topics':
-                self.send(watchlists.listing(c))
-            elif p.path == '/api/status':
+            routed=source_api.get(p.path,q,c)
+            if routed is None:routed=article_api.get(p.path,q,c)
+            if routed is not None:return self.send(routed.body,routed.code)
+            if p.path == '/api/status':
                 tid=q.get('watch_id')
                 if tid and not c.execute('SELECT 1 FROM watch_topics WHERE id=?',(tid,)).fetchone():return self.send({'error':'主题不存在'},404)
                 count=dedup.count(c,' WHERE '+reddit_quality.VISIBLE+(' AND EXISTS(SELECT 1 FROM article_watches aw WHERE aw.article_id=articles.id AND aw.topic_id=?)' if tid else ''),[tid] if tid else [])
                 self.send({'count':count, 'busy':LOCK.locked(), 'last_run':dict(r) if (r:=c.execute('SELECT * FROM runs ORDER BY id DESC LIMIT 1').fetchone()) else None})
-            elif p.path == '/api/sources':
-                rows=[];tid=q.get('watch_id')
-                connections=social.settings()
-                native_connections=native_client.snapshot() if c.execute('SELECT 1 FROM source_connections LIMIT 1').fetchone() else {}
-                topics={t['id']:t for t in watchlists.configs(c)}
-                if tid and not c.execute('SELECT 1 FROM watch_topics WHERE id=?',(tid,)).fetchone():return self.send({'error':'主题不存在'},404)
-                for r in c.execute('SELECT * FROM sources WHERE deleted_at IS NULL ORDER BY id'):
-                    binding=c.execute('SELECT include_all FROM watch_sources WHERE topic_id=? AND source_id=?',(tid,r['id'])).fetchone() if tid else None
-                    if tid and q.get('all')!='1' and not binding:continue
-                    config=content_store.decorate(c,json.loads(r['config']));control=c.execute('SELECT enabled FROM source_controls WHERE source_id=?',(r['id'],)).fetchone()
-                    if control:config['enabled']=bool(control[0])
-                    memberships=[dict(id=b['topic_id'],name=topics[b['topic_id']]['name'],enabled=topics[b['topic_id']]['enabled'],include_all=bool(b['include_all'])) for b in c.execute('SELECT topic_id,include_all FROM watch_sources WHERE source_id=? ORDER BY topic_id',(r['id'],)) if b['topic_id'] in topics]
-                    preference=interests.policy(c,r['id'],topic_id=tid) if tid else max((interests.policy(c,r['id'],topic_id=t['id']) for t in memberships if t['enabled']),key=lambda p:p['score'],default=interests.policy(c,r['id']))
-                    connection=native_connections.get(config.get('connection_id'),{})
-                    body_count=c.execute("SELECT count(*) FROM sightings s JOIN article_content ac ON ac.article_id=s.article_id WHERE s.source_id=? AND ac.body<>''",(r['id'],)).fetchone()[0]
-                    rows.append(dict(r,connection_status=connection.get('status','未连接' if config.get('connection_id') else '未绑定' if config.get('adapter')=='browser' else '无需登录'),next_at=max(connection.get('next_visit_at',0),connection.get('sources_next_at',{}).get(r['id'],0)),body_count=body_count,config=config,effective_adapter=social.effective_adapter(config,connections),topics=memberships,followed=bool(binding),include_all=bool(binding[0]) if binding else False,preference=preference))
-                self.send(sorted(rows,key=lambda r:-r['preference']['score']))
-            elif p.path == '/api/source-detail':
-                tid=q.get('watch_id') or None
-                if tid and not c.execute('SELECT 1 FROM watch_topics WHERE id=?',(tid,)).fetchone():return self.send({'error':'主题不存在'},404)
-                row=c.execute('SELECT * FROM sources WHERE id=? AND deleted_at IS NULL',(q.get('id',''),)).fetchone()
-                if not row:return self.send({'error':'来源不存在'},404)
-                self.send(source_details.describe(c,dict(row),tid))
             elif p.path == '/api/translations':
                 ids=q.get('ids','').split(',')[:50]
                 articles=c.execute('SELECT * FROM articles WHERE id IN ('+','.join('?' for _ in ids)+')',ids).fetchall()
                 self.send({'enabled':bool(translation.model()),'items':{a['id']:translation.cached(c,dict(a)) for a in articles}})
-            elif p.path == '/api/connections':
-                self.send(social.connection_status())
-            elif p.path == '/api/articles':
-                where, args = [], []
-                if not q.get('id'):where.append(reddit_quality.VISIBLE)
-                if q.get('id'):
-                    where.append('id=?');args.append(q['id'])
-                if q.get('watch_id'):
-                    if not c.execute('SELECT 1 FROM watch_topics WHERE id=?',(q['watch_id'],)).fetchone():return self.send({'error':'主题不存在'},404)
-                    where.append('EXISTS (SELECT 1 FROM article_watches aw WHERE aw.article_id=articles.id AND aw.topic_id=?)');args.append(q['watch_id'])
-                if q.get('engineering_category'):
-                    if not q.get('watch_id') or watchlists.get(c,q['watch_id']).get('content_profile')!='developer':return self.send({'error':'技术方向仅用于开发者主题'},400)
-                    category=q['engineering_category']
-                    if category not in engineering.CATEGORIES+['手动收录']:return self.send({'error':'无效的技术方向'},400)
-                    if category=='手动收录':
-                        where.append("EXISTS (SELECT 1 FROM article_watches aw WHERE aw.article_id=articles.id AND aw.topic_id=? AND aw.reason='手动收录')");args.append(q['watch_id'])
-                    else:
-                        where.append("EXISTS (SELECT 1 FROM article_focus af WHERE af.article_id=articles.id AND af.profile='developer' AND af.eligible=1 AND af.category=?)");args.append(category)
-                for key in ('region','kind','source_id'):
-                    if q.get(key):
-                        where.append(key+'=?'); args.append(q[key])
-                if q.get('q'):
-                    where.append('(title LIKE ? OR excerpt LIKE ? OR note LIKE ? OR EXISTS (SELECT 1 FROM article_content ac WHERE ac.article_id=articles.id AND ac.body LIKE ?) OR EXISTS (SELECT 1 FROM translations t WHERE t.article_id=articles.id AND t.model=? AND t.status=\'完成\' AND (t.title LIKE ? OR t.excerpt LIKE ?)))')
-                    term='%'+q['q']+'%';args.extend([term,term,term,term,translation.model(),term,term])
-                if q.get('topic'):
-                    where.append('topics LIKE ?'); args.append('%'+q['topic']+'%')
-                if q.get('starred') == '1':
-                    where.append('starred=1')
-                if q.get('since'):
-                    where.append('published_at>=?'); args.append(q['since'])
-                clause = ' WHERE '+' AND '.join(where) if where else ''
-                try:
-                    offset = max(0,int(q.get('offset','0')))
-                except ValueError:
-                    return self.send({'error':'无效分页'},400)
-                raw=q.get('collapse')=='0'
-                total = dedup.count(c,clause,args,raw=raw)
-                rows = dedup.page(c,clause,args,offset,raw=raw)
-                source_names={r['id']:json.loads(r['config'])['name'] for r in c.execute('SELECT id,config FROM sources')}
-                def serialize(r):
-                    reason=c.execute('SELECT reason FROM article_watches WHERE article_id=? AND topic_id=?',(r['id'],q.get('watch_id',''))).fetchone()
-                    focus=c.execute("SELECT category FROM article_focus WHERE article_id=? AND profile='developer' AND eligible=1",(r['id'],)).fetchone()
-                    metadata=content_store.info(c,r['id'])
-                    quality=c.execute('SELECT eligible,reason,comment_count,evidence FROM article_quality WHERE article_id=?',(r['id'],)).fetchone()
-                    item=dict(r,source_name=source_names.get(r['source_id'],'手动录入'),content_status=metadata['status'],media=metadata['media'],topics=json.loads(r['topics']),match_reason=reason[0] if reason else '',engineering_category='手动收录' if reason and reason[0]=='手动收录' else (focus[0] if focus else ''))
-                    item['reddit_quality']=dict(quality) if quality else None
-                    for key in ('duplicate_group','duplicate_priority','duplicate_rank'):item.pop(key,None)
-                    return item
-                items=[]
-                for r in rows:
-                    item=serialize(r)
-                    item['duplicates']=[serialize(v) for v in dedup.versions(c,r['duplicate_group'],q.get('watch_id')) if v['id']!=r['id']]
-                    item['duplicate_count']=len(item['duplicates'])+1
-                    items.append(item)
-                self.send({'total':total,'items':items})
             else:
                 self.send({'error':'Not found'},404)
 
@@ -393,63 +319,16 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body,dict):raise ValueError('请求必须为JSON对象')
             with connect() as c:
                 extra=semantic_api.post(self.path,body,c)
-                if extra is None:extra=collection_api.post(self.path,body,c,sys.modules[__name__])
+                if extra is None:extra=collection_api.post(self.path,body,c,CollectionServices(fetch,parse_feed,canonical,put))
             if extra is not None:return self.send(extra)
-            if self.path == '/api/watch-topic':
-                with connect() as c:result=watchlists.save(c,body)
-                self.send(result)
-            elif self.path == '/api/watch-source':
-                tid=body['watch_id'];sid=body['source_id']
-                if not isinstance(body.get('include_all',False),bool):raise ValueError('include_all须为布尔值')
-                if not isinstance(body.get('follow',True),bool):raise ValueError('follow须为布尔值')
-                with connect() as c:
-                    watchlists.get(c,tid)
-                    if body.get('follow',True):watchlists.bind(c,tid,sid,body.get('include_all',False))
-                    else:c.execute('DELETE FROM watch_sources WHERE topic_id=? AND source_id=?',(tid,sid))
-                    watchlists.reindex(c,tid)
-                self.send({'ok':True})
-            elif self.path == '/api/watch-sources':
-                if not isinstance(body.get('include_all',False),bool):raise ValueError('include_all须为布尔值')
-                with connect() as c:result=watchlists.bind_many(c,body['watch_id'],body.get('source_ids'),body.get('include_all',False))
-                self.send(result)
-            elif self.path == '/api/translate':
+            routed=source_api.post(self.path,body,connect,SourceServices(fetch,parse_feed,canonical))
+            if routed is None:routed=article_api.post(self.path,body,connect,ArticleServices(put,date,canonical))
+            if routed is not None:return self.send(routed.body,routed.code)
+            if self.path == '/api/translate':
                 ids=body.get('ids',[])
                 if not isinstance(ids,list) or len(ids)>50 or any(not isinstance(i,str) for i in ids):raise ValueError('每次最多翻译50条资料')
                 with connect() as c:articles=c.execute('SELECT * FROM articles WHERE id IN ('+','.join('?' for _ in ids)+')',ids).fetchall()
                 self.send({'enabled':bool(translation.model()),'queued':translation.enqueue(connect,articles,body.get('retry') is True)},202)
-            elif self.path == '/api/source':
-                if not isinstance(body.get('include_all',True),bool):raise ValueError('include_all须为布尔值')
-                if body.get('watch_id') is not None and not isinstance(body['watch_id'],str):raise ValueError('无效的主题')
-                url=canonical(str(body['url']).strip())
-                learned=interests.discover(url,fetch,parse_feed,canonical,body.get('feed_url') or None)
-                if str(body.get('name','')).strip():learned['name']=str(body['name']).strip()[:200]
-                with connect() as c:result=interests.register(c,learned,url,canonical,body.get('watch_id','ai') or None,body.get('include_all',True))
-                self.send(result)
-            elif self.path == '/api/source-delete':
-                with connect() as c:result=source_lifecycle.delete(c,body.get('source_id'))
-                self.send(result)
-            elif self.path == '/api/source-feedback':
-                source_id=body['source_id'];kind=body['action'];tid=body.get('watch_id') or 'ai'
-                with connect() as c:
-                    watchlists.get(c,tid)
-                    if not c.execute('SELECT 1 FROM sources WHERE id=? AND deleted_at IS NULL',(source_id,)).fetchone():raise ValueError('来源不存在')
-                    if kind in ('pause','resume'):
-                        reason=body.get('reason')
-                        if reason is not None and (not isinstance(reason,str) or len(reason)>300):raise ValueError('暂停原因最多300字')
-                        c.execute('INSERT OR REPLACE INTO source_controls VALUES(?,?)',(source_id,int(kind=='resume')))
-                        if kind=='pause' and reason:
-                            c.execute('UPDATE sources SET error=? WHERE id=?',(reason,source_id))
-                    elif kind in ('prefer','less'):
-                        interests.signal(c,source_id,'explicit:prefer','prefer',kind=='prefer',topic_id=tid)
-                        interests.signal(c,source_id,'explicit:less','less',kind=='less',topic_id=tid)
-                    elif kind=='reset':
-                        if tid=='ai':c.execute("DELETE FROM source_signals WHERE source_id=? AND signal_key NOT LIKE 'scope:%'",(source_id,))
-                        else:
-                            prefix='scope:'+tid+':'
-                            c.execute('DELETE FROM source_signals WHERE source_id=? AND substr(signal_key,1,?)=?',(source_id,len(prefix),prefix))
-                    else:raise ValueError('无效来源操作')
-                    result=interests.policy(c,source_id,topic_id=tid)
-                self.send(result)
             elif self.path == '/api/collect':
                 tid=body.get('watch_id') or None
                 with connect() as c:
@@ -458,31 +337,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.send({'accepted':True},202)
             elif self.path == '/api/backup':
                 self.send({'path':backup()})
-            elif self.path == '/api/article':
-                if body.get('review','未核验') not in ('未核验','已核验','存疑'):
-                    raise ValueError('无效核验状态')
-                with connect() as c:
-                    tid=body.get('watch_id') or 'ai';watchlists.get(c,tid)
-                    old=c.execute('SELECT * FROM articles WHERE id=?',(body['id'],)).fetchone()
-                    if not old:raise ValueError('资料不存在')
-                    for hit in c.execute('SELECT source_id FROM sightings WHERE article_id=?',(body['id'],)).fetchall():
-                        sid=hit[0]
-                        interests.signal(c,sid,'star:'+body['id'],'star',bool(body.get('starred')),topic_id=tid)
-                        interests.signal(c,sid,'verified:'+body['id'],'verified',body.get('review')=='已核验',topic_id=tid)
-                    c.execute('UPDATE articles SET starred=?,note=?,review=? WHERE id=?',(int(bool(body.get('starred'))),str(body.get('note',''))[:20000],body.get('review','未核验'),body['id']))
-                self.send({'ok':True})
-            elif self.path == '/api/import':
-                if not str(body.get('title','')).strip():
-                    raise ValueError('标题不能为空')
-                s = {'id':'manual-import','name':body.get('publisher','手动录入'),'region':body.get('region','全球'),'language':body.get('language','未知'),'kind':body.get('kind','研报')}
-                body['published_at'] = date(body.get('published_at'))
-                body['excerpt'] = str(body.get('excerpt',''))[:20000]
-                with connect() as c:
-                    tid=body.get('watch_id') or 'ai';watchlists.get(c,tid)
-                    added = put(c,s,body)
-                    aid=hashlib.sha256(canonical(body['url']).encode()).hexdigest()[:24]
-                    c.execute('INSERT OR REPLACE INTO article_watches VALUES(?,?,?)',(aid,tid,'手动收录'))
-                self.send({'added':added})
             else:
                 self.send({'error':'Not found'},404)
         except (ValueError,KeyError,TypeError,urllib.error.URLError,OSError,ET.ParseError) as e:
