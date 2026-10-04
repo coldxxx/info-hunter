@@ -1,55 +1,12 @@
 'use client';
+import type { PlatformConnections as Connections, Podcast } from '@/lib/api-types/platform';
+import { platformRequest as request } from '@/lib/api';
+export { platformRequest as request } from '@/lib/api';
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useUrlState, updateUrlState } from '@/lib/url-state';
 
-type Connection = {
-  id: string;
-  platform: string;
-  status: string;
-  message: string;
-  used_today: number;
-  daily_limit: number;
-  last_success: number;
-  retry_at: number;
-};
-type Connections = {
-  available: boolean;
-  error?: string;
-  items: Connection[];
-  storage?: { bytes: number; free_bytes: number };
-  reddit?: { approval_confirmed: boolean };
-};
-type Podcast = {
-  name: string;
-  author: string;
-  feed_url: string;
-  url: string;
-  updated_at: string;
-  reason: string;
-};
-export async function request<T = Record<string, unknown>>(
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const response = await fetch(
-    '/api/' + path,
-    body === undefined
-      ? {}
-      : {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        },
-  );
-  const result = (await response.json()) as Record<string, unknown>;
-  if (!response.ok)
-    throw new Error(
-      typeof result.error === 'string' ? result.error : '请求失败',
-    );
-  return result as T;
-}
 const labels: Record<string, string> = {
   ready: '已连接',
   needs_login: '待登录',

@@ -1,17 +1,8 @@
 'use client';
+import type { ArticleContent as Content } from '@/lib/api-types/media';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { request } from './platform-panel';
-type Segment = { start: number; end: number; text: string };
-type Content = {
-  body: string;
-  origin: string;
-  status: string;
-  segments: Segment[];
-  media: { type?: string; url?: string };
-  error?: string;
-  job?: { status: string; progress?: number; stage?: string; error?: string };
-};
+import { platformRequest as request, uploadRequest } from '@/lib/api';
 function clock(n: number) {
   const ms = Math.max(0, Math.round(n * 1000));
   return `${String(Math.floor(ms / 3600000)).padStart(2, '0')}:${String(Math.floor(ms / 60000) % 60).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')},${String(ms % 1000).padStart(3, '0')}`;
@@ -175,12 +166,7 @@ export default function MediaPanel({ id, url }: { id: string; url: string }) {
               try {
                 const form = new FormData();
                 form.append('file', file);
-                const response = await fetch('/api/media-upload?id=' + id, {
-                  method: 'POST',
-                  body: form,
-                });
-                const result = (await response.json()) as { error?: string };
-                if (!response.ok) throw new Error(result.error);
+                await uploadRequest('media-upload?id=' + id, form);
                 await refresh();
               } catch (e) {
                 setError(String(e));

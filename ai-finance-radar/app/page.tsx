@@ -1,4 +1,6 @@
 'use client';
+import type { WatchTopic, Translation, FeedArticle as Article, CollectorStatus as Status } from '@/lib/api-types/feed';
+import { pageRequest as api } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import MediaPanel from './media-panel';
 import SemanticPanel, { SemanticArticleActions } from './semantic-panel';
@@ -20,54 +22,6 @@ import {
   Menu,
   X,
 } from 'lucide-react';
-type WatchTopic = {
-  id: string;
-  name: string;
-  description: string;
-  keywords: string[];
-  exclude: string[];
-  regions: string[];
-  enabled: boolean;
-  news_search: boolean;
-  content_profile?: 'standard' | 'developer';
-  article_count: number;
-  source_count: number;
-};
-type Translation = {
-  status: string;
-  title: string;
-  excerpt: string;
-  error: string;
-};
-type Article = {
-  content_status?: string;
-  media?: { type?: string };
-  duplicate_count?: number;
-  duplicates?: Article[];
-  match_reason?: string;
-  engineering_category?: string;
-  id: string;
-  title: string;
-  url: string;
-  excerpt: string;
-  publisher: string;
-  region: string;
-  language: string;
-  kind: string;
-  topics: string[];
-  published_at: string | null;
-  collected_at: string;
-  source_id: string;
-  source_name?: string;
-  starred: number;
-  note: string;
-  review: string;
-};
-type Status = {
-  count: number;
-  busy: boolean;
-  last_run: { finished_at: string | null } | null;
-};
 const engineeringCategories = [
   '工具更新',
   '工程实践',
@@ -95,23 +49,6 @@ const stamp = (v: string | null) =>
         minute: '2-digit',
       })
     : '时间未知';
-async function api<T = Record<string, unknown>>(
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const r = await fetch(
-    '/api/' + path,
-    body === undefined
-      ? {}
-      : {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        },
-  );
-  if (!r.ok) throw new Error(`请求失败 (${r.status})，请检查本地服务。`);
-  return (await r.json()) as T;
-}
 export default function Home() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [watchId] = useUrlState('watch', 'coding-agent', { history: 'push' });
@@ -182,11 +119,10 @@ export default function Home() {
   useEffect(() => {
     if (!articleId || selectedRecord?.id === articleId) return;
     const controller = new AbortController();
-    fetch('/api/articles?' + new URLSearchParams({ id: articleId }), { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('资料详情读取失败');
-        return await response.json() as { items: Article[] };
-      })
+    api<{ items: Article[] }>('articles?' + new URLSearchParams({ id: articleId }), undefined, {
+      signal: controller.signal,
+      httpError: () => '资料详情读取失败',
+    })
       .then((data) => {
         if (controller.signal.aborted) return;
         if (!data.items[0]) throw new Error('该资料不存在或已过期');

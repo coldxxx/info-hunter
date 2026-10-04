@@ -1,4 +1,6 @@
 'use client';
+import type { SemanticConfig as Config, SemanticPair as Pair, SemanticStatus as Status } from '@/lib/api-types/semantic';
+import { semanticRequest as request } from '@/lib/api';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,34 +12,6 @@ const relations: Record<string, string> = {
   duplicate: '重复信息', complement: '同事件有增量', conflict: '同事件有冲突',
   related: '主题相关', unrelated: '不相关', uncertain: '信息不足',
 };
-type Config = {
-  enabled: boolean; mode: 'review' | 'auto'; embedding_model: string; judge_model: string;
-  embedding_url: string; judge_url: string; candidate_threshold: number; auto_threshold: number;
-  top_k: number; window_days: number; daily_pair_limit: number;
-};
-type Article = { id: string; title: string; url: string; excerpt: string; publisher: string; language: string; published_at: string | null; kind: string; review_text: string; has_full_text: boolean; truncated: boolean };
-type Pair = {
-  id: string; left: Article; right: Article; similarity: number; relation: string; model: string;
-  status: string; reviewed_relation: string | null; review_note: string | null; updated_at: number;
-  decision: { confidence: number; reason: string; evidence_a: string; evidence_b: string;
-    guards: string[]; text_scope: string; same_event: boolean; new_information: boolean; contradiction: boolean };
-};
-type Status = {
-  config: Config; jobs: Record<string, number>; relations: Record<string, number>; awaiting: number;
-  reviewed: number; collapsed: number; last_error: string;
-  auto_gate: { ready: boolean; requirement: string; report: { count?: number; precision?: number; recall?: number } };
-  budget: { used: number; limit: number; resumes_at: number | null };
-  index: { total: number; indexed: number };
-  events: { id: number; action: string; target: string; created_at: number; undone_by: number | null }[];
-};
-async function request<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch('/api/semantic/' + path, body === undefined ? {} : {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
-  const result: unknown = await response.json();
-  if (!response.ok) throw new Error(result && typeof result === 'object' && 'error' in result ? String(result.error) : '请求失败，请检查本地服务');
-  return result as T;
-}
 const date = (value: string | null) => value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '发布日期未知';
 
 function PairCard({ pair, onReview, busy }: { pair: Pair; onReview: (pair: Pair, relation: string, note: string) => void; busy: boolean }) {
