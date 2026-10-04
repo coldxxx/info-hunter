@@ -1,0 +1,11 @@
+data/
+backups/
+__pycache__/
+.env
+*.log
+connections.local.json
+connections.local.tmp
+native/.venv/
+native/.python/
+native/env.local
+native/verification/

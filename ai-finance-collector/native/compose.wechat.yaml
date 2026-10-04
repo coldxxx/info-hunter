@@ -1,0 +1,26 @@
+name: radar-wechat
+services:
+  wechat:
+    image: ghcr.io/rachelos/we-mp-rss@sha256:af771f21b3f7958a5dea16911fba050a6d7b92eac2fb2499c467c1b11f07ef34
+    ports:
+      - "127.0.0.1:43203:8001"
+    volumes:
+      - ../data/wechat:/app/data
+    environment:
+      TZ: Asia/Shanghai
+      PORT: "8001"
+      SECRET_KEY: ${WECHAT_SECRET_KEY:?Set a local secret}
+      PROXY_ENABLED: "False"
+      CASCADE_ENABLED: "False"
+      GATHER.MODEL: web
+      GATHER.CONTENT: "True"
+      GATHER.CONTENT_AUTO_CHECK: "False"
+      GATHER.CONTENT_FALLBACK: "False"
+      MAX_PAGE: "1"
+      THREADS: "1"
+      SPAN_INTERVAL: "60"
+      ARTICLE_STATS_REFRESH_ENABLED: "False"
+      RSS_FULL_CONTEXT: "True"
+      SEND_CODE: "False"
+      ENABLE_JOB: "True"
+    restart: unless-stopped

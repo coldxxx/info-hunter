@@ -1,0 +1,36 @@
+# Private configuration, databases, credentials, and user state
+.env
+.env.*
+!.env.example
+!.env.sample
+**/env.local
+**/connections.local.json
+**/connections.local.tmp
+**/data/
+**/backups/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.pem
+*.key
+*.p12
+*.pfx
+*.lic
+
+# Dependencies, generated builds, and local validation artifacts
+**/node_modules/
+**/.venv/
+**/.python/
+**/__pycache__/
+*.py[cod]
+*.log
+*.tsbuildinfo
+**/verification/
+**/coverage/
+**/.pytest_cache/
+**/.cache/
+.DS_Store

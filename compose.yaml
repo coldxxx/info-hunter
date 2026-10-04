@@ -1,0 +1,15 @@
+services:
+  observatory:
+    image: ai-industry-observatory:local
+    build: .
+    ports:
+      - "127.0.0.1:${RADAR_PORT:-43187}:43187"
+    environment:
+      RADAR_TRANSLATION_URL: "http://host.docker.internal:1234/v1"
+      RADAR_TRANSLATION_MODEL: "translategemma-4b"
+      RADAR_PUBLIC_PORT: "${RADAR_PORT:-43187}"
+    volumes:
+      - ./ai-finance-collector/data:/data
+      - ./ai-finance-collector/backups:/backups
+    restart: unless-stopped
+    init: true

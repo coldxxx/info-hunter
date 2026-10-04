@@ -1,0 +1,5 @@
+# Local proxy DNS compatibility; omit this file on machines without Fake-IP DNS.
+services:
+  observatory:
+    environment:
+      RADAR_FAKE_DNS: "1"
