@@ -1,110 +1,94 @@
-# 信息观察室：自定义主题检索与归档
+# Info Hunter · 信息雷达
 
-默认进入「Coding 与 Agent」：关注编程助手、Agent 工程、MCP、工具调用与开发工具；「AI 产业」保留已有资料与来源。
+本地研究资料库：按自定义主题关注公开订阅、作者、频道与板块，保存来源、标题、摘要、可用正文和媒体文字稿。信息流支持搜索、同文分组、收藏、笔记和独立核验；开发者主题按具体技术线索筛选。可选本地模型提供日语/韩语翻译和可撤销的语义关系复核。
 
-- 左侧「关注主题」切换资料库视图；「主题设置」新增或编辑名称、关键词、排除词和地区。
-- 保存主题可自动生成公开新闻 RSS 检索入口，再在「来源管理」粘贴作者、频道、博客或播客链接，或复用已有来源。
-- 来源可以选择全部收录或按关键词筛选；开发者主题始终额外检查技术相关性。一般资讯主题支持地区筛选；排除词对所有主题生效，手动录入保留在选定主题。
-- 同一资料可属于多个主题，原文、收藏、笔记和核验状态不复制。多看/少看的偏好按主题记录，共享来源优先采用更高的采集优先级；暂停来源作用于所有主题，暂停主题只停止该主题的调度。
-- 公开新闻索引不是全网搜索；论坛、视频与播客的接入能力、授权限制仍按下文处理。
-- 添加主题时自动备份原数据库；原有 AI 资料迁移为 AI 主题，不改写文章内容。
+采集能力取决于来源与已有授权。浏览器登录、公众号桥接、转写及模型服务按需配置；页面上的模型判断不替代人工核验。用户数据留本机，源码与私有配置分开管理。
 
-启动：双击 `启动观察室-Docker.command`，打开 http://localhost:43187/ 。已有 LM Studio 本地翻译继续生效。
+## 项目组成与依赖
 
-# AI产业观察室：Docker一键版
+| 部分 | 技术与要求 |
+| --- | --- |
+| `ai-finance-radar/` | React 19、Vinext、Vite 8、TypeScript、Tailwind/shadcn；Node >=22.13.0、npm |
+| `ai-finance-collector/` | Python 3.9+ 标准库、SQLite、HTTP；Docker 运行时 Python 3.12 |
+| 可选 `ai-finance-collector/native/` | Apple Silicon macOS、Python 3.12、FastAPI、Playwright、FFmpeg、MLX Whisper；锁定依赖见 requirements.lock |
+| 可选模型 / 公众号 | LM Studio 本地服务 / 独立 We-MP-RSS Compose |
 
-collector是采集/存储服务，radar是网页；合并镜像编译同一网页为静态资源，由一个Python进程提供网页与API。运行时无需Node、Vite开发服务或云端托管。原有两终端开发方式继续可用。
+前端领域组件与状态位于 `features/`，`app/` 保留兼容入口。后端保留 `radar.py` CLI 与公共调用，通过存储、API、采集与语义工作模块协作。完整数据流见 [架构](docs/architecture.md)。
 
-## 启动与停止
+## 开发启动
 
-先启动Docker Desktop，在本目录运行：
+在仓库根目录启动隔离 API，避免开发过程使用正式数据库：
+
+```sh
+IH_DEV_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/info-hunter-dev.XXXXXX")"
+RADAR_DATA_DIR="$IH_DEV_ROOT/data" \
+RADAR_BACKUP_DIR="$IH_DEV_ROOT/backups" \
+RADAR_CONNECTIONS_FILE="$IH_DEV_ROOT/connections.local.json" \
+RADAR_NATIVE_DATA="$IH_DEV_ROOT/native" \
+python3 -B ai-finance-collector/radar.py serve
+```
+
+另一个终端启动页面：
+
+```sh
+cd ai-finance-radar
+npm ci
+npm run dev
+```
+
+访问 `http://127.0.0.1:43187`；Vite 将 `/api` 代理到 `127.0.0.1:43188`。启动 API 会初始化所选目录并运行后台调度。正式数据位置、端口、模型与授权配置见 [运维说明](docs/operations.md)。
+
+迁移来的 native 虚拟环境仍有指向旧目录的绝对链接，需从采集器目录通过 `sh native/bootstrap.sh` 在新路径重建，才可使用 `sh native/start.sh`。安装 LaunchAgent 会切换固定标签的服务，按运维步骤单独安排；此次代码整理未切换实例。
+
+## 构建与 Docker
+
+```sh
+cd ai-finance-radar
+npm run build:container
+npm run build
+```
+
+静态容器构建生成 `container-dist/`，由 Python 提供页面及同源 API；普通构建保留 Vinext/Cloudflare 链路。`npm run start` 对应 Wrangler 本地运行，开发 API 代理定义在 Vite 配置中；两种构建分别验证。
+
+完整 Docker 启动在仓库根目录执行：
 
 ```sh
 docker compose up -d --build
+docker compose ps
 ```
 
-或双击 `启动观察室-Docker.command`。访问 http://localhost:43187/ 。需要其他端口时 `RADAR_PORT=43190 docker compose up -d --build`；以后保持同一端口配置。停止用 `docker compose stop`，查看日志用 `docker compose logs -f`。Docker Desktop及电脑必须保持运行，睡眠期间不保证更新；容器退出后由重启策略恢复。
+Compose 仅绑定本机端口，默认 43187，挂载采集器 `data/` 与 `backups/`。启动会使用并写入这些目录。`compose.override.yaml` 为 Fake-IP DNS 环境启用兼容；不需要时用 `docker compose -f compose.yaml up -d --build`。停止用 `docker compose stop`。
 
-数据库和备份分别挂载原有 `ai-finance-collector/data`、`ai-finance-collector/backups`，旧2054条档案无需复制；不将数据库、私有配置、笔记或凭据打进镜像。首次迁移旧库时用SQLite backup API自动保存迁移前快照，迁移为新增表，不清空既有笔记/收藏/核验状态。首次启动不会立即对全部外部来源发请求；网页“更新信息”可手动采集，后台每6小时检查一次。
+`.gitignore` 与 `.dockerignore` 分别排除数据库、备份、账号配置、登录状态、许可文件、原始验收资料、依赖和生成产物。官方 API 的无凭据形状可参考 [配置示例](ai-finance-collector/connections.example.json)，实际配置通过 `social.py configure` 保存到被忽略文件；主 Python 不自动读取 `.env`。
 
-要在另一台机器使用，先构建或导入 `ai-industry-observatory:local` 镜像并用Compose挂载自己的资料目录。导出镜像可用 `docker image save ai-industry-observatory:local -o observatory.tar`；资料备份独立迁移，镜像不是数据备份。
+## 验证与贡献
 
-当前电脑代理使用198.18.0.0/15 Fake-IP DNS，`compose.override.yaml`仅为域名解析结果启用兼容；IP字面量、localhost及其他内网地址仍被拒绝。其他机器若不使用此代理，移除该override文件即可恢复默认严格检查。
-
-## 来源学习：从粘贴链接开始
-
-在“来源管理”粘贴板块、作者主页、帖子、频道、博客、播客或RSS地址，可选填写名称和明确的RSS地址。
-
-- Reddit帖子归并到板块；X、雪球帖子归并到作者；YouTube频道/handle/视频在可确认频道时归并到频道；博客不同文章通过其公开RSS归并到订阅源。
-- YouTube频道订阅、博客/播客RSS在验证返回有效RSS/Atom后可自动采集标题、摘要、链接和发布日期。尚不下载音视频、不自动转录、不将收集元数据标记为已观看/收听。
-- Reddit、X、雪球默认显示浏览器辅助；不自动操作登录浏览器。Reddit/X已有明确启用的授权接口可用于新添加的社区/作者，仍受现有审批、付费开关、额度及冷却限制。粘贴链接不会启用付费接口。
-- 不支持的页面、登录拦截、订阅发现失败保留来源与原因，可填写RSS地址再次添加。失败不称为已自动接通。
-- 已记录的原始链接进入submitted_links表；它是入口线索，不伪装成已读正文。
-
-## 可解释的偏好，不是训练大模型
-
-基准10分；手动分享+2、收藏+4、标记已核验+2、点击“多看”+8、“少看”−8。信号30天减半，分数限制0—100；建议频率：30分及以上每6小时，15—30分每12小时，其他每24小时。时间衰减会自动改变档位。
-
-同一链接同一天最多计一次分享，不同帖子归并到同一来源后累积偏好；收藏来回开关或重复点“多看”不会重复奖励。用户可以暂停/恢复或重置兴趣分。兴趣只影响采集选择，不改变事实可信度，新条目默认未核验。采集成功、重采旧条目和重跑任务不产生正反馈。
-
-每轮最多选择8个已到期的个性来源，7个优先来源加1个等待最久的探索来源；基础新闻入口保留。未有偏好信号的基础入口沿用每轮检查；得到反馈后也按偏好调度。后台按到期时间检查；手动“更新信息”可提前检查，但仍限制每轮个性来源数量。特定来源CLI采集可直接指定。更多优先级并不突破平台配额或付费开关。
-
-## 凭据
-
-旧版私有配置保留在 `ai-finance-collector/connections.local.json`，Docker不自动读取或复制它。需要授权接口时，在容器中明确配置：
+仓库根目录：
 
 ```sh
-docker compose exec observatory python social.py configure reddit
-docker compose exec observatory python social.py configure x
+python3 scripts/check_backend.py
+python3 scripts/check_frontend.py
 ```
 
-容器私有配置保存到挂载的data目录，分享数据库备份不包含此配置；分享整个data目录前要单独保管该文件。也可自行用RADAR_CONNECTIONS_FILE指定另行挂载的配置。没有配置不会请求这些接口。
-
-## 验证
-
-2026-10-04已完成：34项后端测试、TypeScript类型检查、Docker构建与健康检查、网页粘贴订阅和偏好按钮操作。迁移前后原2054条文章逐条一致；容器实测NVIDIA订阅18条、Latent Space订阅20条。已添加Latent Space并首次归档20条，“多看”反馈使其兴趣分升至20，建议每12小时检查。网页浏览器控制台无错误。
-
-后端：`cd ai-finance-collector && python3 -B -m unittest -v`。
-网页：`cd ai-finance-radar && npm run build:container`、`npx tsc --noEmit`。
-镜像：`docker compose build`，启动后访问 `/api/status` 与网页，检查容器健康状态。
-
-该改造仍未接入Obsidian导出/综合分析；Wiki继续承担证据核验与研究判断。
-
-## LM Studio 本地翻译
-
-使用TranslateGemma 4B GGUF Q4_K_S。模型在Mac上的LM Studio运行，Docker只调用本地API。下载完成后加载模型并将API标识设为`translategemma-4b`，开启1234端口服务。命令行可用：
+前端目录：
 
 ```sh
-~/.lmstudio/bin/lms load translategemma --identifier translategemma-4b --context-length 4096 --gpu max
-~/.lmstudio/bin/lms server start --port 1234 --bind 127.0.0.1
+node --test tests/*.test.mjs
+npx tsc --noEmit --incremental false
+npx oxlint app lib features tests
+npm run lint
 ```
 
-Compose使用`http://host.docker.internal:1234/v1`访问Mac。译文只发送至本地模型，不调用云API。日语/韩语标题和摘要在访问列表时排队翻译；新采集条目也自动排队。原文、笔记、核验状态保持原样，译文独立缓存到数据库，可切换原文或打开原文对照。长摘要分段翻译；翻译不代表核验，也不代表读取了原文全文。模型未加载或服务关闭时显示失败原因，重新启动后可点击重试。失败默认5分钟冷却，重试按钮可立即重新排队。首次不会翻译整个历史库，只处理阅读页和新采集条目。
+后端检查先设置临时数据目录；构建脚本只在临时副本产生输出。原生 HTTP 检查用原生 Python 依赖环境运行 `scripts/check_native.py`；合成 API 的无头交互用 `scripts/check_interactions.py`，需已安装 Playwright 与 Chromium。完整命令与边界见 [开发指南](docs/development.md)。
 
-本次翻译接入已验证：41项后端测试、网页TypeScript检查、Docker构建、容器访问本机LM Studio、日/韩样例与真实新闻中文显示、原文切换。当前加载的是4B Q4_K_S，约3.01GiB模型内存。为适配该GGUF的专用模板，后端通过`/v1/completions`明确提供Gemma回合标记及TranslateGemma翻译提示，未修改LM Studio全局模板。
+结构整理前基线为 181 项后端、类型和两种构建通过；全量 lint 有 19 项既有 UI/hook 错误。每批的准确结果、回退点与剩余问题见 [变更记录](docs/changes/README.md)。增加来源适配器、接口或页面功能前请读 [AGENTS.md](AGENTS.md)；行为修改和结构重排分批提交。
 
-实测4B会误译金额数量级，因此阿拉伯数字、百分比和识别到的日/韩金额单位使用占位保护，本地恢复数值；占位丢失、重复、新增数字或输出被截断时不缓存译文，保留原文并提供重试。这个检查不能保证公司名称、上下文和其他语义完全正确，译文始终标注机器翻译，不改变原文核验状态。
+## 当前说明与历史
 
-中文译文也参与搜索。例如韩文原文中的“어플라이드 머티리얼즈”可通过译文“Applied Materials”检索，已在实际网页验证。服务启动后原2054条文章逐条一致，当前2074条资料未被翻译覆盖。
+- [架构与数据流](docs/architecture.md)
+- [开发指南](docs/development.md)
+- [配置、备份恢复与常见故障](docs/operations.md)
+- [模块审计与优先级](docs/audit.md)
+- [历史验收资料索引](docs/history/README.md)
 
-## 界面设计
-
-界面遵循 `ai-finance-radar/DESIGN.md`（用户提供的 Discord 风格设计）：深靛蓝画布、蓝紫/洋红渐变、粗体标题、大圆角卡片。荧光绿只用于更新信息的主操作。Inter 与 Space Grotesk 字体随镜像本地提供；专有字体使用设计文件建议的开源替代。手机导航折叠，并支持关闭按钮、遮罩与 Escape。系统开启减少动态效果时关闭背景与刷新动画。
-
-## Coding 与 Agent 的内容筛选
-
-「内容侧重」选择开发者内容时，主题词命中后还需要具体开发线索，例如 API/SDK、工具功能变化、代码实现、工程机制、评测、排障或研究方法。品牌名、链接、AI/Agent 字样本身不足以收录。规则根据标题与摘要判断，不能代替全文理解或事实核验；证据不足的内容可能被漏筛，可通过手动录入保留。
-
-Coding 与 Agent 默认启用开发者筛选，按工具更新、工程实践、开源项目、评测与性能、安全与可靠性、模型与研究浏览，不按地区分类。地区仍可用于其他一般资讯主题。公开新闻检索添加开发相关条件；关注整个来源也需要符合开发者内容要求，手动收录例外。
-
-首次升级前自动保存 `pre-developer-focus-*.sqlite3`。升级重新计算技术主题关联与分类，原文、笔记、收藏、核验状态及其他主题归属不变。更改主题的内容侧重会重新筛选历史归档；重启不会覆盖用户设置。
-
-2026-10-04 开发者筛选与分类验收：54 项后端测试通过，TypeScript 检查及生产前端构建通过。运行容器健康；浏览器已验证技术方向切换、Coding 主题编辑表单无地区选项、AI 产业地区筛选、手机营销标题搜索无结果。迁移前 3,245 条文章逐条一致（含笔记、收藏、核验状态），其他主题关联不变；Coding 原 320 条移出 239 条、补入历史技术内容 1 条，迁移后 82 条，实采新增 1 条后共 83 条。六个来源最终全部成功；两个连接中断来源重试成功。标准 Docker 构建因 Docker Hub 连接 EOF 中断，本次使用本机已验证的 Python 运行镜像与本地生产前端产物构建并部署；仓库 Dockerfile 仍保留完整源码构建方式。
-
-## 跨来源同文折叠
-
-URL 级去重继续保留；另外为 Google 新闻索引与原站、同一发布方的多个索引入口建立同文分组。仅规范化 Unicode、空白、引号，并去除索引标题末尾明确的发布方后缀；标题须完整相同且足够具体、发布方身份匹配、语言相同、发布时间相差不超过 24 小时。论坛、视频和播客不参与此规则；缺少日期、短泛标题、不同版本号、不同发布方不会仅因标题相似而合并。这不做语义改写或跨语言同文判断，保守规则可能漏掉改标题的转载。
-
-原始文章与 URL 不删除，收藏、笔记、核验状态、翻译和来源关系独立保留。列表先应用筛选，再按同文分组，最后分页；主题计数与信息流采用同一去重口径。默认优先展示已有收藏或标注的版本，其次优先原站和较完整的摘要；卡片标记“同文 N 个入口”，详情可切换各入口查看和编辑自己的记录。首次升级保存 `pre-cross-source-dedup-*.sqlite3`，后续新收录自动进入同一分组流程。
-
-2026-10-04 验收：69 项后端测试通过，TypeScript 与生产构建通过。实库 3,250 条原始记录逐条保持一致，主题成员关系与来源关系不变，SQLite 完整性为 ok；Coding 与 Agent 的 83 条归档折叠为 78 条信息流内容。用户指出的 Copilot code review 两条记录在 API 与浏览器均只显示一个卡片，优先 GitHub 官方链接，两个入口可切换查看。测试覆盖到达顺序、重复采集、历史迁移、误合并边界、分页、来源与主题筛选和副本上的收藏、笔记、核验状态。
+旧手册保留原有记录和日期，作为当时环境的证据；当前操作以本 README 与 docs 指南为准。数据库、历史归档、收藏、笔记和核验状态不随源码整理重建。

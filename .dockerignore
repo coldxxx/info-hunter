@@ -5,13 +5,14 @@
 **/data
 **/backups
 **/verification
-**/connections.local.json
-**/connections.local.tmp
+**/connections.local.*
 **/env.local
 **/.env
 **/.env.*
 **/*.sqlite*
 **/*.db
+**/*.db-wal
+**/*.db-shm
 **/*.pem
 **/*.key
 **/*.p12

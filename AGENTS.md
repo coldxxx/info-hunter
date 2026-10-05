@@ -16,10 +16,11 @@
 
 ## 验证命令
 - 后端：`python3 scripts/check_backend.py`；可加现有 unittest 模块名限定范围。脚本创建临时数据与配置目录。
+- 原生 HTTP：使用原生 Python 依赖环境执行 `python -B scripts/check_native.py`；不启动 lifespan worker，设置临时路径并限制真实 DNS/任务。迁移环境的解释器命令见 `docs/development.md`。
 - 前端：在 `ai-finance-radar` 执行 `node --test tests/*.test.mjs`、`npx tsc --noEmit --incremental false`、`npx oxlint app lib features tests`。
 - 全量 lint：`npm run lint`。基线为通用 UI/hook 的 19 个错误，业务层 lint 基线通过。
-- 构建：`npm run build:container` 与 `npm run build`，输出均是被忽略的构建产物。不得启动现有生产实例作验证。
-- 关键交互以隔离服务/假数据检查 URL 直达、刷新、后退/前进、详情、来源选择/删除/新增、主题、媒体和语义草稿。
+- 构建：根目录 `python3 scripts/check_frontend.py` 在临时副本运行 `build:container` 与 `build`；`docker build` 验证完整镜像。不得启动现有生产实例作验证。
+- 关键交互：按 `docs/development.md` 配置 Python/Chromium 后运行 `scripts/check_interactions.py`，以隔离服务/假数据检查 URL 直达、刷新、后退/前进、详情、来源选择/删除/新增、主题、媒体和语义草稿。
 
 ## 并行协作
 - 最多 3 个子代理，目标、文件范围、验收标准明确；不同代理不同时编辑同一文件。

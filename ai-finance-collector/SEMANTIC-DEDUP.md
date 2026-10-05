@@ -1,3 +1,5 @@
+> 历史资料：以下保留原环境的说明、日期和验收记录。当前启动与开发步骤见[根 README](../README.md)和 [docs 指南](../docs/history/README.md)，旧路径与测试数字不代表本次迁移验收。
+
 # 本地 Qwen 语义去重
 
 入口：<http://127.0.0.1:43187/?view=semantic>。系统使用 Qwen3-Embedding-0.6B Q8_0 做跨语言相似资料检索，使用机器上已有的 Qwen3.6-27B MLX 4bit 判断资料关系。模型由 LM Studio 提供，本机推理，不需要 MCP。

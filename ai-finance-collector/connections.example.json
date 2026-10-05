@@ -1,0 +1,16 @@
+{
+  "reddit": {
+    "enabled": false,
+    "approved": false,
+    "client_id": "",
+    "client_secret": "",
+    "refresh_token": "",
+    "user_agent": "InfoHunterLocal/0.1"
+  },
+  "x": {
+    "enabled": false,
+    "bearer_token": "",
+    "daily_requests": 4,
+    "max_results": 20
+  }
+}
